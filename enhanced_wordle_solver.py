@@ -106,11 +106,11 @@ def main():
         st.session_state.probability_type = "Statistical Likelihood"
 
     # Inputs
-    guess = st.text_input("Enter your guess (5 letters):").lower()
+    guess = st.text_input("Enter the guess you made in wordle (5 letters):").lower()
     feedback = st.text_input("Enter the color feedback of each tile from wordle in order using g, y, or b with no spaces (g=green, y=yellow, b=black):").lower()
 
     # Process feedback
-    if st.button("Filter Words"):
+    if st.button("Submit Feedback"):
         if len(guess) == 5 and len(feedback) == 5 and all(c in "gyb" for c in feedback):
             st.session_state.word_list = filter_words(st.session_state.word_list, guess, feedback)
 
