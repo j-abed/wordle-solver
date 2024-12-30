@@ -107,7 +107,7 @@ def main():
 
     # Inputs
     guess = st.text_input("Enter your guess (5 letters):").lower()
-    feedback = st.text_input("Enter feedback (g=green, y=yellow, b=black):").lower()
+    feedback = st.text_input("Enter the color feedback in order from wordle using g,y, or b with no spaces (g=green, y=yellow, b=black):").lower()
 
     # Process feedback
     if st.button("Filter Words"):
