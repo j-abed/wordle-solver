@@ -1,3 +1,11 @@
+"""
+[WIP] Wordle Solver with Smart Color Preservation
+Known issues:
+- Green tile preservation not working correctly between guesses
+- Need to fix comparison logic for letter positions
+Status: Development version, not ready for production
+"""
+
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -65,11 +73,12 @@ def suggest_word(scores):
     return max(scores, key=scores.get)
 
 # Display feedback as horizontal tiles
-def display_feedback(guess, feedback):
-    st.write("Wordle Feedback:")
+def display_feedback(guess, feedback, show_title=False):
+    if show_title:
+        st.write("Wordle Feedback:")
     tile_html = "<div style='display: flex; gap: 10px;'>"
     for char, fb in zip(guess, feedback):
-        color = {"g": "green", "y": "yellow", "b": "gray"}[fb]
+        color = {"g": "green", "y": "#FFD700", "b": "gray"}[fb]
         tile_html += f"""
         <span style="
             display: inline-block;
@@ -93,31 +102,72 @@ def normalize_scores(scores):
         return {word: 0 for word in scores}
     return {word: (score / total_score) * 100 for word, score in scores.items()}
 
-# Streamlit App
-def main():
-    st.title("Interactive Wordle Solver")
-    st.write("A smarter and more engaging Wordle bot!")
+# User input for color feedback using clickable tiles
+def get_green_positions(guess, feedback):
+    """Return indices and letters of green matches"""
+    return [(i, guess[i]) for i, fb in enumerate(feedback) if fb == "g"]
 
-    # Load words
-    words = load_words()
-    if "word_list" not in st.session_state:
-        st.session_state.word_list = words
-        st.session_state.scores = calculate_statistical_scores(words)
-        st.session_state.probability_type = "Statistical Likelihood"
+def get_color_feedback(guess):
+    # Initialize states and history
+    if 'feedback_states' not in st.session_state:
+        st.session_state.feedback_states = [0] * 5
+    if 'guess_history' not in st.session_state:
+        st.session_state.guess_history = []
+    if 'green_positions' not in st.session_state:
+        st.session_state.green_positions = []
+    
+    if not guess:
+        return ["b"] * 5
 
-    # Inputs
-    guess = st.text_input("Enter the guess you made in wordle (5 letters):").lower()
-    feedback = st.text_input("Enter the color feedback of each tile from wordle in order using g, y, or b with no spaces (g=green, y=yellow, b=black):").lower()
+    # Define color mappings
+    COLORS = {
+        0: "⚫",  # Black/Gray
+        1: "🟡",  # Yellow
+        2: "🟢",  # Green
+    }
+    
+    st.write("Click the circles to change colors: ⚫ → 🟡 → 🟢")
+    
+    # Create container for feedback display
+    feedback_display = st.container()
+    button_container = st.container()
 
-    # Process feedback
-    if st.button("Submit Feedback"):
-        if len(guess) == 5 and len(feedback) == 5 and all(c in "gyb" for c in feedback):
-            st.session_state.word_list = filter_words(st.session_state.word_list, guess, feedback)
+    with button_container:
+        # Create columns for buttons
+        cols = st.columns(6)
 
-            # Display feedback as horizontal tiles
-            display_feedback(guess, feedback)
+        # Create buttons for each letter
+        for i, (col, char) in enumerate(zip(cols[:5], guess)):
+            state = st.session_state.feedback_states[i]
+            with col:
+                st.write(f"### {char.upper()}")
+                if st.button(
+                    COLORS[state],
+                    key=f"btn_{i}_{guess}",
+                    use_container_width=True
+                ):
+                    st.session_state.feedback_states[i] = (state + 1) % 3
+                    st.rerun()
 
-            # Switch to entropy calculations if word list is small
+        # Add submit button in the last column
+        with cols[5]:
+            st.write("###")  # Empty header to align with letters
+            submit_clicked = st.button("Submit", use_container_width=True, type="primary")
+
+    # Convert current state to feedback
+    state_to_feedback = {0: "b", 1: "y", 2: "g"}
+    current_feedback = [state_to_feedback[state] for state in st.session_state.feedback_states]
+    
+    # Process and display feedback if submit was clicked
+    if submit_clicked:
+        feedback_str = ''.join(current_feedback)
+        
+        if len(guess) == 5 and len(feedback_str) == 5:
+            # Add to history and process feedback
+            st.session_state.guess_history.append((guess, current_feedback))
+            st.session_state.word_list = filter_words(st.session_state.word_list, guess, feedback_str)
+
+            # Update probability calculations
             if len(st.session_state.word_list) < 1000:
                 st.session_state.scores = compute_entropy(st.session_state.word_list, st.session_state.word_list)
                 st.session_state.probability_type = "Entropy-Based Calculation"
@@ -126,35 +176,114 @@ def main():
                 st.session_state.probability_type = "Statistical Likelihood"
 
             st.success(f"Filtered words: {len(st.session_state.word_list)} remaining.")
-        else:
-            st.error("Invalid input. Ensure both guess and feedback are 5 characters long.")
+            
+            # Smart reset: preserve only matching greens from current word
+            new_states = [0] * 5  # Start with all black
+            
+            # If we have a previous guess, compare letters at green positions
+            if st.session_state.last_guess and st.session_state.last_green_letters:
+                prev_guess = st.session_state.last_guess
+                # Only preserve greens if same letter in same position
+                for pos, letter in st.session_state.last_green_letters.items():
+                    if pos < len(guess) and guess[pos] == prev_guess[pos] == letter:
+                        new_states[pos] = 2
 
-    # Show probability type
-    st.write(f"**Current Probability Calculation Type:** {st.session_state.probability_type}")
+            # Get current green positions
+            current_green_positions = get_green_positions(guess, current_feedback)
+            
+            # Update with new greens
+            for pos, letter in current_green_positions:
+                new_states[pos] = 2
 
-    # Suggestion
+            # Store current guess and its green letters for next comparison
+            st.session_state.last_guess = guess
+            st.session_state.last_green_letters = {
+                pos: letter for pos, letter in current_green_positions
+            }
+            
+            # Update the feedback states
+            st.session_state.feedback_states = new_states
+            
+            st.rerun()
+
+    return current_feedback
+
+# User input for guess and color feedback in a single action
+def get_guess_and_feedback():
+    guess = st.text_input("Enter your guess (5 letters):", max_chars=5).lower()
+    if guess and len(guess) == 5:
+        return guess, get_color_feedback(guess)
+    return guess, ["b"] * 5
+
+# Streamlit App
+def main():
+    st.title("Wordle Solver")
+    st.write("An entropy based Wordle helper!")
+
+    # Initialize guess history if not exists
+    if 'guess_history' not in st.session_state:
+        st.session_state.guess_history = []
+
+    # Load words
+    words = load_words()
+    if "word_list" not in st.session_state:
+        st.session_state.word_list = words
+        st.session_state.scores = calculate_statistical_scores(words)
+        st.session_state.probability_type = "Statistical Likelihood"
+
+    # Initialize new session state variables
+    if "last_green_positions" not in st.session_state:
+        st.session_state.last_green_positions = []
+    if "last_guess" not in st.session_state:
+        st.session_state.last_guess = None
+
+    # Initialize green letter tracking
+    if "last_green_letters" not in st.session_state:
+        st.session_state.last_green_letters = {}
+
+    # Get guess and process feedback in one step
+    guess, feedback = get_guess_and_feedback()
+    
+    # Display guess history
+    if st.session_state.guess_history:
+        st.write("### Previous Guesses:")
+        for hist_guess, hist_feedback in st.session_state.guess_history:
+            display_feedback(hist_guess, hist_feedback, show_title=False)
+    
+    # Rest of the display logic
     if st.session_state.word_list:
-        suggestion = suggest_word(st.session_state.scores)
-        if suggestion:
-            normalized_scores = normalize_scores(st.session_state.scores)
-            st.write(f"🎯 **Suggested Word**: {suggestion} (Likelihood: {normalized_scores[suggestion]:.2f}%)")
+        # Show probability type
+        st.write(f"**Current Probability Calculation Type:** {st.session_state.probability_type}")
+        
+        # Suggestion
+        if st.session_state.word_list:
+            suggestion = suggest_word(st.session_state.scores)
+            if suggestion:
+                normalized_scores = normalize_scores(st.session_state.scores)
+                st.write(f"🎯 **Suggested Word**: {suggestion} (Likelihood: {normalized_scores[suggestion]:.2f}%)")
 
-            # Top 10 suggested words
-            scores_df = pd.DataFrame.from_dict(normalized_scores, orient="index", columns=["Likelihood (%)"])
-            scores_df = scores_df.sort_values("Likelihood (%)", ascending=False).head(10)
-            st.write("**Top Suggested Words:**")
-            st.table(scores_df)
+                # Top 10 suggested words
+                scores_df = pd.DataFrame.from_dict(normalized_scores, orient="index", columns=["Likelihood (%)"])
+                scores_df = scores_df.sort_values("Likelihood (%)", ascending=False).head(10)
+                st.write("**Top Suggested Words:**")
+                st.table(scores_df)
 
-            # Bar chart of top words using Streamlit
-            st.bar_chart(scores_df)
-        else:
-            st.write("No suggestions available.")
+                # Bar chart of top words using Streamlit
+                st.bar_chart(scores_df)
+            else:
+                st.write("No suggestions available.")
 
     # Reset
     if st.button("Reset Word List"):
         st.session_state.word_list = words
         st.session_state.scores = calculate_statistical_scores(words)
         st.session_state.probability_type = "Statistical Likelihood"
+        st.session_state.feedback_states = [0] * 5
+        st.session_state.submitted_feedback = None
+        st.session_state.guess_history = []  # Clear history
+        st.session_state.last_green_positions = []  # Clear green position history
+        st.session_state.last_guess = None  # Clear last guess
+        st.session_state.last_green_letters = {}  # Clear green letter positions
         st.success("Word list reset!")
 
     # Detailed explanation of entropy at the bottom
